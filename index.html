@@ -1,0 +1,541 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Camera, CameraOff, CheckCircle2, Copy, FileImage, RefreshCcw, ShieldCheck, Smartphone, ScanLine, CircleAlert } from "lucide-react";
+import { motion } from "framer-motion";
+
+const PREFERRED_FORMATS = [
+  "qr_code",
+  "code_128",
+  "code_39",
+  "ean_13",
+  "ean_8",
+  "pdf417",
+  "data_matrix",
+  "itf",
+  "upc_a",
+  "upc_e",
+];
+
+function normalizeDigits(value) {
+  return (value || "").replace(/\D+/g, "");
+}
+
+function extractEidCandidate(raw) {
+  if (!raw) return "";
+  const direct = normalizeDigits(raw);
+  if (direct.length === 32) return direct;
+  const matches = String(raw).match(/\d{32}/g);
+  return matches?.[0] || "";
+}
+
+function validateEid(value) {
+  const digits = normalizeDigits(value);
+  const errors = [];
+
+  if (!digits) {
+    errors.push("EIDが未入力です。");
+  }
+  if (digits && digits.length !== 32) {
+    errors.push("EIDは32桁の数字である必要があります。");
+  }
+  if (digits && !/^\d+$/.test(digits)) {
+    errors.push("EIDは数字のみで構成される必要があります。");
+  }
+
+  return {
+    raw: value,
+    digits,
+    isValid: errors.length === 0,
+    errors,
+    ein: digits.length >= 6 ? digits.slice(0, 6) : "",
+    serialBody: digits.length >= 32 ? digits.slice(6) : "",
+  };
+}
+
+function ResultBadge({ valid }) {
+  if (valid) {
+    return (
+      <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white">
+        <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> 有効フォーマット
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="destructive">
+      <CircleAlert className="mr-1 h-3.5 w-3.5" /> 要確認
+    </Badge>
+  );
+}
+
+export default function EidCheckerWidget() {
+  const [eidInput, setEidInput] = useState("");
+  const [supportedFormats, setSupportedFormats] = useState([]);
+  const [barcodeAvailable, setBarcodeAvailable] = useState(false);
+  const [cameraAvailable, setCameraAvailable] = useState(false);
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState("待機中");
+  const [streaming, setStreaming] = useState(false);
+  const [devices, setDevices] = useState([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState("auto");
+  const [scanLog, setScanLog] = useState([]);
+  const [lastRaw, setLastRaw] = useState("");
+
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const detectorRef = useRef(null);
+  const rafRef = useRef(null);
+  const busyRef = useRef(false);
+  const fileInputRef = useRef(null);
+
+  const result = useMemo(() => validateEid(eidInput), [eidInput]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initCapabilities() {
+      try {
+        const mediaOk = !!(navigator?.mediaDevices?.getUserMedia);
+        setCameraAvailable(mediaOk);
+
+        if ("BarcodeDetector" in window) {
+          setBarcodeAvailable(true);
+          const browserFormats = await window.BarcodeDetector.getSupportedFormats();
+          if (cancelled) return;
+          const merged = PREFERRED_FORMATS.filter((f) => browserFormats.includes(f));
+          setSupportedFormats(merged.length ? merged : browserFormats);
+          detectorRef.current = new window.BarcodeDetector({
+            formats: merged.length ? merged : browserFormats,
+          });
+        } else {
+          setBarcodeAvailable(false);
+        }
+
+        if (mediaOk) {
+          const list = await navigator.mediaDevices.enumerateDevices();
+          if (cancelled) return;
+          const cams = list.filter((d) => d.kind === "videoinput");
+          setDevices(cams);
+        }
+      } catch (e) {
+        setError(`初期化に失敗しました: ${e?.message || "不明なエラー"}`);
+      }
+    }
+
+    initCapabilities();
+
+    return () => {
+      cancelled = true;
+      stopCamera();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function refreshDevices() {
+    try {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      const cams = list.filter((d) => d.kind === "videoinput");
+      setDevices(cams);
+    } catch (e) {
+      setError(`カメラ一覧の取得に失敗しました: ${e?.message || "不明なエラー"}`);
+    }
+  }
+
+  function stopCamera() {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setStreaming(false);
+    setStatus("停止中");
+  }
+
+  function pushScanLog(raw, extracted, format) {
+    setScanLog((prev) => [
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        raw,
+        extracted,
+        format,
+        at: new Date().toLocaleString("ja-JP"),
+      },
+      ...prev,
+    ].slice(0, 8));
+  }
+
+  async function handleDetectedBarcode(barcode) {
+    const raw = barcode?.rawValue || "";
+    const extracted = extractEidCandidate(raw);
+    setLastRaw(raw);
+    pushScanLog(raw, extracted, barcode?.format || "unknown");
+    if (extracted) {
+      setEidInput(extracted);
+      setStatus(`EID候補を検出: ${barcode?.format || "unknown"}`);
+    } else {
+      setStatus(`コードは読めましたが、32桁EIDは抽出できませんでした (${barcode?.format || "unknown"})`);
+    }
+  }
+
+  async function scanLoop() {
+    if (!videoRef.current || !detectorRef.current || busyRef.current) {
+      rafRef.current = requestAnimationFrame(scanLoop);
+      return;
+    }
+
+    busyRef.current = true;
+    try {
+      const barcodes = await detectorRef.current.detect(videoRef.current);
+      if (barcodes?.length) {
+        await handleDetectedBarcode(barcodes[0]);
+      }
+    } catch (e) {
+      setError(`スキャン中にエラーが発生しました: ${e?.message || "不明なエラー"}`);
+    } finally {
+      busyRef.current = false;
+      rafRef.current = requestAnimationFrame(scanLoop);
+    }
+  }
+
+  async function startCamera() {
+    setError("");
+    setStatus("カメラ起動中...");
+
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      setError("このブラウザではカメラAPIが利用できません。");
+      setStatus("カメラ未対応");
+      return;
+    }
+    if (!("BarcodeDetector" in window)) {
+      setError("このブラウザではBarcodeDetector APIが利用できません。画像アップロードまたは手入力を利用してください。");
+      setStatus("バーコード読取未対応");
+      return;
+    }
+
+    try {
+      stopCamera();
+      const constraints = {
+        video: selectedDeviceId !== "auto"
+          ? { deviceId: { exact: selectedDeviceId } }
+          : { facingMode: { ideal: "environment" } },
+        audio: false,
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setStreaming(true);
+      setStatus("スキャン中...");
+      scanLoop();
+      await refreshDevices();
+    } catch (e) {
+      setError(`カメラ起動に失敗しました: ${e?.message || "不明なエラー"}`);
+      setStatus("起動失敗");
+    }
+  }
+
+  async function handleImageUpload(event) {
+    setError("");
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!("BarcodeDetector" in window)) {
+      setError("このブラウザでは画像からのコード検出に対応していません。");
+      return;
+    }
+
+    try {
+      const bitmap = await createImageBitmap(file);
+      const detector = detectorRef.current || new window.BarcodeDetector({ formats: supportedFormats.length ? supportedFormats : PREFERRED_FORMATS });
+      const found = await detector.detect(bitmap);
+      if (!found?.length) {
+        setStatus("画像内のコードを検出できませんでした。");
+        return;
+      }
+      await handleDetectedBarcode(found[0]);
+    } catch (e) {
+      setError(`画像解析に失敗しました: ${e?.message || "不明なエラー"}`);
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function copyEid() {
+    if (!result.digits) return;
+    navigator.clipboard?.writeText(result.digits);
+    setStatus("EIDをコピーしました。");
+  }
+
+  function clearAll() {
+    setEidInput("");
+    setLastRaw("");
+    setError("");
+    setStatus("クリアしました");
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8">
+      <div className="mx-auto max-w-6xl space-y-6">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]"
+        >
+          <Card className="rounded-3xl shadow-sm border-slate-200">
+            <CardHeader>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <CardTitle className="text-2xl flex items-center gap-2">
+                    <ShieldCheck className="h-6 w-6 text-sky-600" />
+                    EIDチェックウィジェット
+                  </CardTitle>
+                  <CardDescription className="mt-2 text-sm leading-6">
+                    スマホのEIDを手入力、画像アップロード、またはWEBカメラから読み取ったQRコード／バーコードで検証します。
+                  </CardDescription>
+                </div>
+                <ResultBadge valid={result.isValid} />
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <Tabs defaultValue="camera" className="w-full">
+                <TabsList className="grid w-full grid-cols-3 rounded-2xl">
+                  <TabsTrigger value="camera">カメラ</TabsTrigger>
+                  <TabsTrigger value="image">画像</TabsTrigger>
+                  <TabsTrigger value="manual">手入力</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="camera" className="space-y-4 pt-4">
+                  <div className="grid gap-4 md:grid-cols-[1fr_auto_auto]">
+                    <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
+                      <SelectTrigger className="rounded-2xl">
+                        <SelectValue placeholder="カメラを選択" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">自動（背面カメラ優先）</SelectItem>
+                        {devices.map((device, index) => (
+                          <SelectItem key={device.deviceId || `${device.label}-${index}`} value={device.deviceId}>
+                            {device.label || `カメラ ${index + 1}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button onClick={startCamera} className="rounded-2xl">
+                      <Camera className="mr-2 h-4 w-4" /> 起動
+                    </Button>
+                    <Button variant="outline" onClick={stopCamera} className="rounded-2xl">
+                      <CameraOff className="mr-2 h-4 w-4" /> 停止
+                    </Button>
+                  </div>
+
+                  <div className="overflow-hidden rounded-3xl border bg-black relative min-h-[280px] flex items-center justify-center">
+                    {streaming ? (
+                      <>
+                        <video ref={videoRef} className="h-[360px] w-full object-cover" muted playsInline />
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                          <div className="h-44 w-44 rounded-3xl border-2 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.25)]" />
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-center text-slate-300 p-8">
+                        <Smartphone className="mx-auto mb-3 h-12 w-12" />
+                        <p>カメラを起動するとここにプレビューが表示されます。</p>
+                        <p className="mt-2 text-xs text-slate-400">QRコードまたはバーコードを枠内に合わせてください。</p>
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="image" className="space-y-4 pt-4">
+                  <div className="rounded-3xl border border-dashed bg-white p-6 text-center">
+                    <FileImage className="mx-auto mb-3 h-10 w-10 text-slate-500" />
+                    <p className="text-sm text-slate-700">QRコード／バーコード画像からEIDを抽出</p>
+                    <p className="mt-1 text-xs text-slate-500">スクリーンショットや写真でも試せます</p>
+                    <div className="mt-4">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageUpload}
+                        className="hidden"
+                      />
+                      <Button onClick={() => fileInputRef.current?.click()} className="rounded-2xl">
+                        <ScanLine className="mr-2 h-4 w-4" /> 画像を選択
+                      </Button>
+                    </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="manual" className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-800">EID（32桁）</label>
+                    <Input
+                      value={eidInput}
+                      onChange={(e) => setEidInput(e.target.value)}
+                      placeholder="例: 89049032000000000000000000000000"
+                      className="rounded-2xl font-mono"
+                    />
+                    <p className="text-xs text-slate-500">数字以外（スペース・ハイフン等）は自動的に無視して判定します。</p>
+                  </div>
+                </TabsContent>
+              </Tabs>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                <Button variant="outline" onClick={refreshDevices} className="rounded-2xl">
+                  <RefreshCcw className="mr-2 h-4 w-4" /> カメラ一覧更新
+                </Button>
+                <Button variant="outline" onClick={copyEid} className="rounded-2xl" disabled={!result.digits}>
+                  <Copy className="mr-2 h-4 w-4" /> EIDコピー
+                </Button>
+                <Button variant="outline" onClick={clearAll} className="rounded-2xl">
+                  クリア
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="space-y-4">
+            <Card className="rounded-3xl shadow-sm border-slate-200">
+              <CardHeader>
+                <CardTitle className="text-lg">検証結果</CardTitle>
+                <CardDescription>32桁数字かどうかを即時に判定します</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-2xl bg-slate-100 p-4">
+                  <div className="text-xs text-slate-500">正規化後のEID</div>
+                  <div className="mt-1 break-all font-mono text-base text-slate-900">{result.digits || "—"}</div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border p-4">
+                    <div className="text-xs text-slate-500">先頭6桁（EIN部）</div>
+                    <div className="mt-1 font-mono text-sm">{result.ein || "—"}</div>
+                  </div>
+                  <div className="rounded-2xl border p-4">
+                    <div className="text-xs text-slate-500">残り桁</div>
+                    <div className="mt-1 break-all font-mono text-sm">{result.serialBody || "—"}</div>
+                  </div>
+                </div>
+
+                {result.isValid ? (
+                  <Alert className="rounded-2xl border-emerald-200 bg-emerald-50 text-emerald-900">
+                    <CheckCircle2 className="h-4 w-4" />
+                    <AlertTitle>フォーマット上は有効です</AlertTitle>
+                    <AlertDescription>
+                      32桁数字として整合しています。実在EIDかどうか、割当済みEINかどうか、回線開通可否までは別システムで確認してください。
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <Alert className="rounded-2xl">
+                    <CircleAlert className="h-4 w-4" />
+                    <AlertTitle>入力を確認してください</AlertTitle>
+                    <AlertDescription>
+                      <ul className="ml-5 list-disc space-y-1">
+                        {(result.errors.length ? result.errors : ["QRコードまたはバーコードからEIDを読み取るか、手入力してください。"]).map((msg) => (
+                          <li key={msg}>{msg}</li>
+                        ))}
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                <div className="space-y-2 rounded-2xl border p-4">
+                  <div className="text-sm font-medium">動作状況</div>
+                  <div className="text-sm text-slate-700">{status}</div>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <Badge variant={cameraAvailable ? "default" : "secondary"}>カメラAPI: {cameraAvailable ? "利用可" : "未対応"}</Badge>
+                    <Badge variant={barcodeAvailable ? "default" : "secondary"}>BarcodeDetector: {barcodeAvailable ? "利用可" : "未対応"}</Badge>
+                  </div>
+                  {supportedFormats.length > 0 && (
+                    <div className="pt-2">
+                      <div className="mb-2 text-xs text-slate-500">対応フォーマット</div>
+                      <div className="flex flex-wrap gap-2">
+                        {supportedFormats.map((format) => (
+                          <Badge key={format} variant="outline">{format}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {lastRaw && (
+                  <div className="rounded-2xl border p-4">
+                    <div className="text-xs text-slate-500">最後に読み取った生データ</div>
+                    <div className="mt-1 break-all font-mono text-xs text-slate-800">{lastRaw}</div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-3xl shadow-sm border-slate-200">
+              <CardHeader>
+                <CardTitle className="text-lg">直近スキャン履歴</CardTitle>
+                <CardDescription>最新8件まで保存</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {scanLog.length === 0 ? (
+                    <p className="text-sm text-slate-500">まだスキャン履歴はありません。</p>
+                  ) : (
+                    scanLog.map((item) => (
+                      <div key={item.id} className="rounded-2xl border p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <Badge variant="outline">{item.format}</Badge>
+                          <span className="text-xs text-slate-500">{item.at}</span>
+                        </div>
+                        <div className="mt-2 text-xs text-slate-500">抽出EID</div>
+                        <div className="break-all font-mono text-sm text-slate-900">{item.extracted || "抽出失敗"}</div>
+                        <div className="mt-2 text-xs text-slate-500">生データ</div>
+                        <div className="break-all font-mono text-xs text-slate-700">{item.raw}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </motion.div>
+
+        <Card className="rounded-3xl shadow-sm border-slate-200">
+          <CardHeader>
+            <CardTitle className="text-lg">実装メモ</CardTitle>
+            <CardDescription>本ツールをそのまま業務利用に組み込む場合のポイント</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 text-sm text-slate-700 md:grid-cols-3">
+            <div className="rounded-2xl border p-4">
+              <div className="font-medium text-slate-900">1. HTTPSで公開</div>
+              <p className="mt-2">カメラ利用はHTTPSまたはlocalhostでの提供が前提です。</p>
+            </div>
+            <div className="rounded-2xl border p-4">
+              <div className="font-medium text-slate-900">2. 実在確認は別APIで</div>
+              <p className="mt-2">この画面ではフォーマット検証まで。必要ならGSMA/EIN管理や社内DB照合APIを追加してください。</p>
+            </div>
+            <div className="rounded-2xl border p-4">
+              <div className="font-medium text-slate-900">3. モバイル最適化済み</div>
+              <p className="mt-2">背面カメラ優先・画像アップロード対応・コピー機能付きのため、スマホ現場運用向きです。</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {error && (
+          <Alert className="rounded-2xl border-amber-200 bg-amber-50 text-amber-900">
+            <CircleAlert className="h-4 w-4" />
+            <AlertTitle>エラー</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+      </div>
+    </div>
+  );
+}
