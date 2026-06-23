@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EIDチェックウィジェット</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --line: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --primary: #0284c7;
+      --primary-weak: #e0f2fe;
+      --ok: #059669;
+      --ok-weak: #ecfdf5;
+      --warn: #dc2626;
+      --warn-weak: #fef2f2;
+      --amber: #b45309;
+      --amber-weak: #fffbeb;
+      --shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+      --radius-xl: 24px;
+      --radius-lg: 18px;
+      --radius-md: 14px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 24px 24px 8px;
+      border-bottom: 0;
+    }
+
+    .card-content {
+      padding: 16px 24px 24px;
+    }
+
+    .title-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 1.75rem; }
+    h2 { font-size: 1.15rem; }
+    .desc { color: var(--muted); margin-top: 8px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .badge.ok { background: var(--ok); color: white; }
+    .badge.danger { background: var(--warn); color: white; }
+    .badge.secondary { background: #f1f5f9; color: #334155; border-color: var(--line); }
+    .badge.outline { background: white; color: #334155; border-color: var(--line); }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      background: #f1f5f9;
+      border-radius: 18px;
+      padding: 6px;
+    }
+    .tab-button {
+      border: 0;
+      background: transparent;
+      color: #334155;
+      border-radius: 14px;
+      padding: 12px 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .tab-button.active {
+      background: white;
+      box-shadow: 0 1px 2px rgba(15,23,42,.06), 0 4px 10px rgba(15,23,42,.02);
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .tab-panel { display: none; margin-top: 16px; }
+    .tab-panel.active { display: block; }
+
+    .controls-grid {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .button, .select, .input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      min-height: 46px;
+      padding: 0 14px;
+      font-size: 14px;
+      outline: none;
+      background: white;
+      color: var(--text);
+    }
+    .button {
+      cursor: pointer;
+      background: white;
+      transition: .18s ease;
+    }
+    .button:hover { transform: translateY(-1px); }
+    .button.primary {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+    .button.ghost {
+      background: white;
+      color: #334155;
+    }
+    .button:disabled {
+      opacity: .55;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .video-wrap {
+      position: relative;
+      min-height: 300px;
+      border: 1px solid var(--line);
+      background: #000;
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #video {
+      width: 100%;
+      height: 360px;
+      object-fit: cover;
+      display: none;
+      background: #000;
+    }
+    #video.is-visible { display: block; }
+
+    .scan-overlay {
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .scan-overlay.active { display: flex; }
+    .scan-box {
+      width: 176px;
+      height: 176px;
+      border-radius: 24px;
+      border: 2px solid rgba(255,255,255,.9);
+      box-shadow: 0 0 0 9999px rgba(0,0,0,.25);
+    }
+    .video-placeholder {
+      color: #cbd5e1;
+      text-align: center;
+      padding: 24px;
+    }
+    .video-placeholder .icon {
+      font-size: 44px;
+      display: block;
+      margin-bottom: 12px;
+    }
+
+    .upload-box {
+      border: 1px dashed #cbd5e1;
+      border-radius: var(--radius-xl);
+      padding: 28px;
+      text-align: center;
+      background: white;
+    }
+    .upload-box .icon {
+      font-size: 42px;
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .field { display: grid; gap: 8px; }
+    .field label { font-size: 14px; font-weight: 600; }
+    .small { font-size: 12px; color: var(--muted); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .break { word-break: break-all; }
+
+    .action-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .stack { display: grid; gap: 16px; }
+
+    .result-box {
+      background: #f1f5f9;
+      border-radius: 18px;
+      padding: 16px;
+    }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+    .mini-card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      background: white;
+    }
+
+    .alert {
+      display: grid;
+      gap: 6px;
+      border-radius: 18px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      background: white;
+    }
+    .alert.ok { border-color: #a7f3d0; background: var(--ok-weak); color: #065f46; }
+    .alert.warn { border-color: #fecaca; background: var(--warn-weak); color: #991b1b; }
+    .alert.amber { border-color: #fde68a; background: var(--amber-weak); color: #92400e; }
+    .alert-title { font-weight: 700; }
+    .alert ul { margin: 6px 0 0 18px; padding: 0; }
+
+    .status-box, .raw-box, .history-item, .memo-item {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      background: white;
+    }
+    .status-row, .history-row, .flex-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .flex-wrap { justify-content: flex-start; }
+
+    .history-list { display: grid; gap: 12px; }
+
+    .memo-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .footer-note {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .controls-grid,
+      .action-grid,
+      .mini-grid,
+      .memo-grid {
+        grid-template-columns: 1fr;
+      }
+      .container { padding: 12px; }
+      .card-header { padding: 20px 18px 8px; }
+      .card-content { padding: 16px 18px 20px; }
+      h1 { font-size: 1.35rem; }
+      #video { height: 300px; }
+      .scan-box { width: 150px; height: 150px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="grid">
+      <section class="card">
+        <div class="card-header">
+          <div class="title-row">
+            <div>
+              <h1>🛡️ EIDチェックウィジェット</h1>
+              <p class="desc">スマホのEIDを手入力、画像アップロード、またはWEBカメラから読み取ったQRコード／バーコードで検証します。</p>
+            </div>
+            <div id="resultBadge" class="badge danger">要確認</div>
+          </div>
+        </div>
+        <div class="card-content">
+          <div class="tabs">
+            <button class="tab-button active" data-tab="camera">カメラ</button>
+            <button class="tab-button" data-tab="image">画像</button>
+            <button class="tab-button" data-tab="manual">手入力</button>
+          </div>
+
+          <div id="panel-camera" class="tab-panel active">
+            <div class="controls-grid">
+              <select id="cameraSelect" class="select">
+                <option value="auto">自動（背面カメラ優先）</option>
+              </select>
+              <button id="startBtn" class="button primary">カメラ起動</button>
+              <button id="stopBtn" class="button ghost">停止</button>
+            </div>
+            <div class="video-wrap">
+              <video id="video" playsinline muted></video>
+              <div id="scanOverlay" class="scan-overlay">
+                <div class="scan-box"></div>
+              </div>
+              <div id="videoPlaceholder" class="video-placeholder">
+                <span class="icon">📱</span>
+                <p>カメラを起動するとここにプレビューが表示されます。</p>
+                <p class="small" style="margin-top:8px; color:#94a3b8;">QRコードまたはバーコードを枠内に合わせてください。</p>
+              </div>
+            </div>
+          </div>
+
+          <div id="panel-image" class="tab-panel">
+            <div class="upload-box">
+              <span class="icon">🖼️</span>
+              <p>QRコード／バーコード画像からEIDを抽出</p>
+              <p class="small" style="margin-top:4px;">スクリーンショットや写真でも試せます</p>
+              <div style="margin-top:16px;">
+                <input id="imageInput" type="file" accept="image/*" class="hidden" />
+                <button id="imageBtn" class="button primary" style="max-width:250px;">画像を選択</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="panel-manual" class="tab-panel">
+            <div class="field">
+              <label for="eidInput">EID（32桁）</label>
+              <input id="eidInput" class="input mono" placeholder="例: 89049032000000000000000000000000" />
+              <div class="small">数字以外（スペース・ハイフン等）は自動的に無視して判定します。</div>
+            </div>
+          </div>
+
+          <div class="action-grid">
+            <button id="refreshBtn" class="button ghost">カメラ一覧更新</button>
+            <button id="copyBtn" class="button ghost" disabled>EIDコピー</button>
+            <button id="clearBtn" class="button ghost">クリア</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="stack">
+        <section class="card">
+          <div class="card-header">
+            <h2>検証結果</h2>
+            <p class="desc">32桁数字かどうかを即時に判定します</p>
+          </div>
+          <div class="card-content stack">
+            <div class="result-box">
+              <div class="small">正規化後のEID</div>
+              <div id="normalizedEid" class="mono break" style="margin-top:6px; font-size:16px; color:#0f172a;">—</div>
+            </div>
+
+            <div class="mini-grid">
+              <div class="mini-card">
+                <div class="small">先頭6桁（EIN部）</div>
+                <div id="einValue" class="mono" style="margin-top:6px; font-size:14px;">—</div>
+              </div>
+              <div class="mini-card">
+                <div class="small">残り桁</div>
+                <div id="serialValue" class="mono break" style="margin-top:6px; font-size:14px;">—</div>
+              </div>
+            </div>
+
+            <div id="validationAlert" class="alert warn">
+              <div class="alert-title">入力を確認してください</div>
+              <div id="validationMessage">QRコードまたはバーコードからEIDを読み取るか、手入力してください。</div>
+            </div>
+
+            <div class="status-box">
+              <div style="font-weight:700; font-size:14px;">動作状況</div>
+              <div id="statusText" style="margin-top:6px; font-size:14px; color:#334155;">待機中</div>
+              <div class="flex-wrap" style="margin-top:10px;">
+                <span id="cameraApiBadge" class="badge secondary">カメラAPI: 未確認</span>
+                <span id="barcodeApiBadge" class="badge secondary">BarcodeDetector: 未確認</span>
+              </div>
+              <div id="formatsWrap" class="hidden" style="margin-top:12px;">
+                <div class="small" style="margin-bottom:8px;">対応フォーマット</div>
+                <div id="formatsList" class="flex-wrap"></div>
+              </div>
+            </div>
+
+            <div id="lastRawWrap" class="raw-box hidden">
+              <div class="small">最後に読み取った生データ</div>
+              <div id="lastRaw" class="mono break" style="margin-top:6px; font-size:12px; color:#334155;"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <h2>直近スキャン履歴</h2>
+            <p class="desc">最新8件まで保存</p>
+          </div>
+          <div class="card-content">
+            <div id="historyList" class="history-list">
+              <p class="small">まだスキャン履歴はありません。</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <section class="card" style="margin-top:16px;">
+      <div class="card-header">
+        <h2>実装メモ</h2>
+        <p class="desc">本ツールをそのまま業務利用に組み込む場合のポイント</p>
+      </div>
+      <div class="card-content">
+        <div class="memo-grid">
+          <div class="memo-item">
+            <div style="font-weight:700;">1. HTTPSで公開</div>
+            <p class="desc" style="margin-top:8px;">カメラ利用はHTTPSまたはlocalhostでの提供が前提です。</p>
+          </div>
+          <div class="memo-item">
+            <div style="font-weight:700;">2. 実在確認は別APIで</div>
+            <p class="desc" style="margin-top:8px;">この画面ではフォーマット検証まで。必要ならGSMA/EIN管理や社内DB照合APIを追加してください。</p>
+          </div>
+          <div class="memo-item">
+            <div style="font-weight:700;">3. モバイル最適化済み</div>
+            <p class="desc" style="margin-top:8px;">背面カメラ優先・画像アップロード対応・コピー機能付きのため、スマホ現場運用向きです。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div id="errorAlert" class="alert amber hidden" style="margin-top:16px;">
+      <div class="alert-title">エラー</div>
+      <div id="errorText"></div>
+    </div>
+
+    <div class="footer-note">単体HTML版 / 外部ライブラリなし / カメラ読取はHTTPSまたはlocalhost推奨</div>
+  </div>
+
+  <script>
+    const PREFERRED_FORMATS = [
+      "qr_code",
+      "code_128",
+      "code_39",
+      "ean_13",
+      "ean_8",
+      "pdf417",
+      "data_matrix",
+      "itf",
+      "upc_a",
+      "upc_e",
+    ];
+
+    const state = {
+      eidInput: "",
+      supportedFormats: [],
+      barcodeAvailable: false,
+      cameraAvailable: false,
+      status: "待機中",
+      streaming: false,
+      selectedDeviceId: "auto",
+      devices: [],
+      scanLog: [],
+      lastRaw: "",
+      error: "",
+      detector: null,
+      stream: null,
+      rafId: null,
+      busy: false,
+    };
+
+    const el = {
+      tabButtons: Array.from(document.querySelectorAll('.tab-button')),
+      panels: {
+        camera: document.getElementById('panel-camera'),
+        image: document.getElementById('panel-image'),
+        manual: document.getElementById('panel-manual'),
+      },
+      cameraSelect: document.getElementById('cameraSelect'),
+      startBtn: document.getElementById('startBtn'),
+      stopBtn: document.getElementById('stopBtn'),
+      refreshBtn: document.getElementById('refreshBtn'),
+      copyBtn: document.getElementById('copyBtn'),
+      clearBtn: document.getElementById('clearBtn'),
+      imageBtn: document.getElementById('imageBtn'),
+      imageInput: document.getElementById('imageInput'),
+      video: document.getElementById('video'),
+      videoPlaceholder: document.getElementById('videoPlaceholder'),
+      scanOverlay: document.getElementById('scanOverlay'),
+      eidInput: document.getElementById('eidInput'),
+      resultBadge: document.getElementById('resultBadge'),
+      normalizedEid: document.getElementById('normalizedEid'),
+      einValue: document.getElementById('einValue'),
+      serialValue: document.getElementById('serialValue'),
+      validationAlert: document.getElementById('validationAlert'),
+      validationMessage: document.getElementById('validationMessage'),
+      statusText: document.getElementById('statusText'),
+      cameraApiBadge: document.getElementById('cameraApiBadge'),
+      barcodeApiBadge: document.getElementById('barcodeApiBadge'),
+      formatsWrap: document.getElementById('formatsWrap'),
+      formatsList: document.getElementById('formatsList'),
+      lastRawWrap: document.getElementById('lastRawWrap'),
+      lastRaw: document.getElementById('lastRaw'),
+      historyList: document.getElementById('historyList'),
+      errorAlert: document.getElementById('errorAlert'),
+      errorText: document.getElementById('errorText'),
+    };
+
+    function normalizeDigits(value) {
+      return String(value || '').replace(/\D+/g, '');
+    }
+
+    function extractEidCandidate(raw) {
+      if (!raw) return '';
+      const direct = normalizeDigits(raw);
+      if (direct.length === 32) return direct;
+      const matches = String(raw).match(/\d{32}/g);
+      return matches ? matches[0] : '';
+    }
+
+    function validateEid(value) {
+      const digits = normalizeDigits(value);
+      const errors = [];
+      if (!digits) errors.push('EIDが未入力です。');
+      if (digits && digits.length !== 32) errors.push('EIDは32桁の数字である必要があります。');
+      if (digits && !/^\d+$/.test(digits)) errors.push('EIDは数字のみで構成される必要があります。');
+      return {
+        raw: value,
+        digits,
+        isValid: errors.length === 0,
+        errors,
+        ein: digits.length >= 6 ? digits.slice(0, 6) : '',
+        serialBody: digits.length >= 32 ? digits.slice(6) : '',
+      };
+    }
+
+    function setError(message) {
+      state.error = message || '';
+      el.errorText.textContent = state.error;
+      el.errorAlert.classList.toggle('hidden', !state.error);
+    }
+
+    function setStatus(message) {
+      state.status = message;
+      el.statusText.textContent = message;
+    }
+
+    function renderCameraBadges() {
+      el.cameraApiBadge.className = 'badge ' + (state.cameraAvailable ? 'ok' : 'secondary');
+      el.cameraApiBadge.textContent = 'カメラAPI: ' + (state.cameraAvailable ? '利用可' : '未対応');
+      el.barcodeApiBadge.className = 'badge ' + (state.barcodeAvailable ? 'ok' : 'secondary');
+      el.barcodeApiBadge.textContent = 'BarcodeDetector: ' + (state.barcodeAvailable ? '利用可' : '未対応');
+
+      el.formatsWrap.classList.toggle('hidden', state.supportedFormats.length === 0);
+      el.formatsList.innerHTML = '';
+      state.supportedFormats.forEach((format) => {
+        const span = document.createElement('span');
+        span.className = 'badge outline';
+        span.textContent = format;
+        el.formatsList.appendChild(span);
+      });
+    }
+
+    function renderResult() {
+      const result = validateEid(state.eidInput);
+      el.normalizedEid.textContent = result.digits || '—';
+      el.einValue.textContent = result.ein || '—';
+      el.serialValue.textContent = result.serialBody || '—';
+      el.copyBtn.disabled = !result.digits;
+
+      if (result.isValid) {
+        el.resultBadge.className = 'badge ok';
+        el.resultBadge.textContent = '有効フォーマット';
+        el.validationAlert.className = 'alert ok';
+        el.validationAlert.innerHTML = '<div class="alert-title">フォーマット上は有効です</div><div>32桁数字として整合しています。実在EIDかどうか、割当済みEINかどうか、回線開通可否までは別システムで確認してください。</div>';
+      } else {
+        el.resultBadge.className = 'badge danger';
+        el.resultBadge.textContent = '要確認';
+        el.validationAlert.className = 'alert warn';
+        const messages = result.errors.length ? result.errors : ['QRコードまたはバーコードからEIDを読み取るか、手入力してください。'];
+        el.validationAlert.innerHTML = '<div class="alert-title">入力を確認してください</div><div><ul>' + messages.map(m => `<li>${escapeHtml(m)}</li>`).join('') + '</ul></div>';
+      }
+    }
+
+    function renderLastRaw() {
+      el.lastRawWrap.classList.toggle('hidden', !state.lastRaw);
+      el.lastRaw.textContent = state.lastRaw || '';
+    }
+
+    function renderHistory() {
+      if (!state.scanLog.length) {
+        el.historyList.innerHTML = '<p class="small">まだスキャン履歴はありません。</p>';
+        return;
+      }
+      el.historyList.innerHTML = state.scanLog.map(item => `
+        <div class="history-item">
+          <div class="history-row">
+            <span class="badge outline">${escapeHtml(item.format)}</span>
+            <span class="small">${escapeHtml(item.at)}</span>
+          </div>
+          <div class="small" style="margin-top:10px;">抽出EID</div>
+          <div class="mono break" style="margin-top:4px; font-size:14px;">${escapeHtml(item.extracted || '抽出失敗')}</div>
+          <div class="small" style="margin-top:10px;">生データ</div>
+          <div class="mono break" style="margin-top:4px; font-size:12px; color:#334155;">${escapeHtml(item.raw)}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderVideoState() {
+      el.video.classList.toggle('is-visible', state.streaming);
+      el.scanOverlay.classList.toggle('active', state.streaming);
+      el.videoPlaceholder.classList.toggle('hidden', state.streaming);
+    }
+
+    function renderAll() {
+      renderCameraBadges();
+      renderResult();
+      renderLastRaw();
+      renderHistory();
+      renderVideoState();
+    }
+
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function updateEidInput(value) {
+      state.eidInput = value || '';
+      el.eidInput.value = state.eidInput;
+      renderResult();
+    }
+
+    function pushScanLog(raw, extracted, format) {
+      state.scanLog = [{
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        raw,
+        extracted,
+        format,
+        at: new Date().toLocaleString('ja-JP'),
+      }, ...state.scanLog].slice(0, 8);
+      renderHistory();
+    }
+
+    async function handleDetectedBarcode(barcode) {
+      const raw = barcode && barcode.rawValue ? barcode.rawValue : '';
+      const extracted = extractEidCandidate(raw);
+      state.lastRaw = raw;
+      pushScanLog(raw, extracted, barcode && barcode.format ? barcode.format : 'unknown');
+      renderLastRaw();
+      if (extracted) {
+        updateEidInput(extracted);
+        setStatus(`EID候補を検出: ${barcode && barcode.format ? barcode.format : 'unknown'}`);
+      } else {
+        setStatus(`コードは読めましたが、32桁EIDは抽出できませんでした (${barcode && barcode.format ? barcode.format : 'unknown'})`);
+      }
+    }
+
+    async function refreshDevices() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      try {
+        const list = await navigator.mediaDevices.enumerateDevices();
+        state.devices = list.filter(d => d.kind === 'videoinput');
+        const prev = el.cameraSelect.value || 'auto';
+        el.cameraSelect.innerHTML = '<option value="auto">自動（背面カメラ優先）</option>';
+        state.devices.forEach((device, index) => {
+          const option = document.createElement('option');
+          option.value = device.deviceId;
+          option.textContent = device.label || `カメラ ${index + 1}`;
+          el.cameraSelect.appendChild(option);
+        });
+        if ([...el.cameraSelect.options].some(opt => opt.value === prev)) {
+          el.cameraSelect.value = prev;
+        }
+      } catch (e) {
+        setError(`カメラ一覧の取得に失敗しました: ${e && e.message ? e.message : '不明なエラー'}`);
+      }
+    }
+
+    function stopCamera() {
+      if (state.rafId) cancelAnimationFrame(state.rafId);
+      state.rafId = null;
+      state.busy = false;
+      if (state.stream) {
+        state.stream.getTracks().forEach(track => track.stop());
+        state.stream = null;
+      }
+      el.video.srcObject = null;
+      state.streaming = false;
+      setStatus('停止中');
+      renderVideoState();
+    }
+
+    async function scanLoop() {
+      if (!el.video || !state.detector || state.busy) {
+        state.rafId = requestAnimationFrame(scanLoop);
+        return;
+      }
+
+      state.busy = true;
+      try {
+        const barcodes = await state.detector.detect(el.video);
+        if (barcodes && barcodes.length) {
+          await handleDetectedBarcode(barcodes[0]);
+        }
+      } catch (e) {
+        setError(`スキャン中にエラーが発生しました: ${e && e.message ? e.message : '不明なエラー'}`);
+      } finally {
+        state.busy = false;
+        state.rafId = requestAnimationFrame(scanLoop);
+      }
+    }
+
+    async function startCamera() {
+      setError('');
+      setStatus('カメラ起動中...');
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setError('このブラウザではカメラAPIが利用できません。');
+        setStatus('カメラ未対応');
+        return;
+      }
+      if (!('BarcodeDetector' in window)) {
+        setError('このブラウザではBarcodeDetector APIが利用できません。画像アップロードまたは手入力を利用してください。');
+        setStatus('バーコード読取未対応');
+        return;
+      }
+
+      try {
+        stopCamera();
+        const selectedDeviceId = el.cameraSelect.value || 'auto';
+        const constraints = {
+          video: selectedDeviceId !== 'auto'
+            ? { deviceId: { exact: selectedDeviceId } }
+            : { facingMode: { ideal: 'environment' } },
+          audio: false,
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        state.stream = stream;
+        el.video.srcObject = stream;
+        await el.video.play();
+        state.streaming = true;
+        setStatus('スキャン中...');
+        renderVideoState();
+        scanLoop();
+        await refreshDevices();
+      } catch (e) {
+        setError(`カメラ起動に失敗しました: ${e && e.message ? e.message : '不明なエラー'}`);
+        setStatus('起動失敗');
+      }
+    }
+
+    async function handleImageUpload(file) {
+      setError('');
+      if (!file) return;
+      if (!('BarcodeDetector' in window)) {
+        setError('このブラウザでは画像からのコード検出に対応していません。');
+        return;
+      }
+      try {
+        const bitmap = await createImageBitmap(file);
+        const detector = state.detector || new window.BarcodeDetector({
+          formats: state.supportedFormats.length ? state.supportedFormats : PREFERRED_FORMATS,
+        });
+        const found = await detector.detect(bitmap);
+        if (!found || !found.length) {
+          setStatus('画像内のコードを検出できませんでした。');
+          return;
+        }
+        await handleDetectedBarcode(found[0]);
+      } catch (e) {
+        setError(`画像解析に失敗しました: ${e && e.message ? e.message : '不明なエラー'}`);
+      }
+    }
+
+    async function initCapabilities() {
+      try {
+        state.cameraAvailable = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        if ('BarcodeDetector' in window) {
+          state.barcodeAvailable = true;
+          const browserFormats = await window.BarcodeDetector.getSupportedFormats();
+          const merged = PREFERRED_FORMATS.filter(f => browserFormats.includes(f));
+          state.supportedFormats = merged.length ? merged : browserFormats;
+          state.detector = new window.BarcodeDetector({ formats: state.supportedFormats });
+        } else {
+          state.barcodeAvailable = false;
+          state.supportedFormats = [];
+        }
+        if (state.cameraAvailable) {
+          await refreshDevices();
+        }
+      } catch (e) {
+        setError(`初期化に失敗しました: ${e && e.message ? e.message : '不明なエラー'}`);
+      } finally {
+        renderAll();
+      }
+    }
+
+    function clearAll() {
+      updateEidInput('');
+      state.lastRaw = '';
+      setError('');
+      setStatus('クリアしました');
+      renderLastRaw();
+    }
+
+    function setupTabs() {
+      el.tabButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tab = btn.dataset.tab;
+          el.tabButtons.forEach(b => b.classList.toggle('active', b === btn));
+          Object.entries(el.panels).forEach(([name, panel]) => {
+            panel.classList.toggle('active', name === tab);
+          });
+        });
+      });
+    }
+
+    function bindEvents() {
+      el.eidInput.addEventListener('input', (e) => updateEidInput(e.target.value));
+      el.cameraSelect.addEventListener('change', (e) => { state.selectedDeviceId = e.target.value; });
+      el.startBtn.addEventListener('click', startCamera);
+      el.stopBtn.addEventListener('click', stopCamera);
+      el.refreshBtn.addEventListener('click', refreshDevices);
+      el.copyBtn.addEventListener('click', async () => {
+        const result = validateEid(state.eidInput);
+        if (!result.digits) return;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(result.digits);
+            setStatus('EIDをコピーしました。');
+          } else {
+            const temp = document.createElement('textarea');
+            temp.value = result.digits;
+            document.body.appendChild(temp);
+            temp.select();
+            document.execCommand('copy');
+            document.body.removeChild(temp);
+            setStatus('EIDをコピーしました。');
+          }
+        } catch (e) {
+          setError('コピーに失敗しました。');
+        }
+      });
+      el.clearBtn.addEventListener('click', clearAll);
+      el.imageBtn.addEventListener('click', () => el.imageInput.click());
+      el.imageInput.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+        await handleImageUpload(file);
+        e.target.value = '';
+      });
+      window.addEventListener('beforeunload', stopCamera);
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden && state.streaming) stopCamera();
+      });
+    }
+
+    setupTabs();
+    bindEvents();
+    renderAll();
+    initCapabilities();
+  </script>
+</body>
+</html>
